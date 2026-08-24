@@ -1,0 +1,11 @@
+streamlit
+opencv-python
+opencv-contrib-python
+pymongo
+pandas
+numpy
+tensorflow
+keras
+scikit-learn
+jupyter
+Pillow
