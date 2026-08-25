@@ -2,16 +2,6 @@ import os
 import cv2
 import numpy as np
 import pickle
-# pyrefly: ignore [missing-import]
-from keras.models import Sequential, load_model
-# pyrefly: ignore [missing-import]
-from keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout
-# pyrefly: ignore [missing-import]
-from keras.utils import to_categorical
-# pyrefly: ignore [missing-import]
-from sklearn.model_selection import train_test_split
-# pyrefly: ignore [missing-import]
-from sklearn.preprocessing import LabelEncoder
 from db import DatabaseManager
 import time
 from datetime import datetime
@@ -21,7 +11,12 @@ db_manager = DatabaseManager()
 face_cascade = cv2.CascadeClassifier('haarcascade_frontalface_default.xml')
 
 def train_model():
-    """Reads dataset, trains a CNN model, and saves it."""
+    from sklearn.preprocessing import LabelEncoder
+    from sklearn.model_selection import train_test_split
+    from keras.utils import to_categorical
+    from keras.models import Sequential
+    from keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout
+
     dataset_path = "dataset"
     if not os.path.exists(dataset_path) or len(os.listdir(dataset_path)) == 0:
         return False, "Dataset is empty. Please register students first."
@@ -81,6 +76,8 @@ def train_model():
     return True, "Model trained and saved successfully."
 
 def recognize_faces_and_mark_attendance():
+    from keras.models import load_model
+
     if not os.path.exists("models/attendance_model.h5") or not os.path.exists("models/label_encoder.pkl"):
         return False, "Model not trained yet. Please train the model first."
 
@@ -91,6 +88,10 @@ def recognize_faces_and_mark_attendance():
     cam = cv2.VideoCapture(0)
     if not cam.isOpened():
         return False, "Could not open webcam."
+
+    window_name = 'Smart Attendance System'
+    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+    cv2.setWindowProperty(window_name, cv2.WND_PROP_TOPMOST, 1)
 
     consecutive_recognitions = 0
     logged_msg = ""
@@ -120,14 +121,12 @@ def recognize_faces_and_mark_attendance():
                 student_data = db_manager.get_student_by_id(student_id)
                 name = student_data["name"] if student_data else "Unknown"
 
-                # Mark Attendance
                 logged_msg = db_manager.mark_attendance(student_id)
                 consecutive_recognitions += 1
 
                 cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
                 cv2.putText(frame, f"Verified: {name}", (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
                 
-                # Draw success banner
                 cv2.rectangle(frame, (0, 0), (width, 40), (0, 255, 0), -1)
                 cv2.putText(frame, "ACCESS GRANTED - LOGGING TIME", (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
 
@@ -136,7 +135,7 @@ def recognize_faces_and_mark_attendance():
                 cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 0, 255), 2)
                 cv2.putText(frame, "Unknown Face", (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
 
-        cv2.imshow('Smart Attendance System', frame)
+        cv2.imshow(window_name, frame)
         
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
