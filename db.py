@@ -8,6 +8,7 @@ class DatabaseManager:
         self.db = self.client[db_name]
         self.students = self.db['students']
         self.attendance = self.db['attendance']
+        self.system_meta = self.db["system_meta"]
         self.tz = pytz.timezone('Asia/Karachi')
 
     def generate_student_id(self):
@@ -157,6 +158,9 @@ class DatabaseManager:
         """
         return sorted(self.attendance.distinct("date"))
 
+    def get_today_str(self):
+        return datetime.now(self.tz).strftime("%Y-%m-%d")
+
     def get_attendance_summary_per_student(self):
         """
         Builds a per-student report: how many days they were present,
@@ -204,3 +208,57 @@ class DatabaseManager:
             {"$sort": {"date": 1}}
         ]
         return list(self.attendance.aggregate(pipeline))
+
+    def get_consecutive_absent_students(self, threshold_days=3):
+        """
+        Returns students who have been absent for `threshold_days` or more
+        consecutive class-days, counting backward from the most recent date.
+        """
+        all_dates = self.get_distinct_attendance_dates()  # already sorted ascending
+        if len(all_dates) < threshold_days:
+            return []  # not enough history yet to even measure this
+
+        recent_dates = all_dates[-threshold_days:]  # last N class-days
+        students = self.get_all_students()
+        flagged = []
+
+        for student in students:
+            student_id = student["student_id"]
+            present_dates = set(self.attendance.distinct("date", {"student_id": student_id}))
+
+            # count how many of the most recent N days this student missed, consecutively from the end
+            consecutive_absent = 0
+            for date in reversed(recent_dates):
+                if date not in present_dates:
+                    consecutive_absent += 1
+                else:
+                    break  # streak broken, stop counting
+
+            if consecutive_absent >= threshold_days:
+                flagged.append({
+                    "student_id": student_id,
+                    "name": student["name"],
+                    "consecutive_absences": consecutive_absent
+                })
+
+        return flagged
+
+    def get_low_attendance_students(self, percentage_threshold=75):
+        """Returns students whose overall attendance % is below the threshold."""
+        summary = self.get_attendance_summary_per_student()
+        return [s for s in summary if s["attendance_percentage"] < percentage_threshold and s["total_days"] > 0]
+
+    def get_last_check_date(self, check_type="auto_notify"):
+        """Fetch when a given automated check last ran (to avoid re-running/spamming same day)."""
+        record = self.db["system_meta"].find_one({"check_type": check_type})
+        return record["last_run_date"] if record else None
+
+    def set_last_check_date(self, check_type="auto_notify"):
+        """Mark that a given automated check just ran today."""
+        today_str = datetime.now(self.tz).strftime("%Y-%m-%d")
+        self.system_meta.update_one(
+            {"check_type": check_type},
+            {"$set": {"last_run_date": today_str}},
+            upsert=True
+        )
+    

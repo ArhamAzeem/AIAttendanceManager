@@ -6,6 +6,7 @@ import datetime
 import time
 import re
 import html as html_lib
+from notifications import run_irregularity_check
 
 st.set_page_config(
     page_title="Campus AI · Attendance",
@@ -931,7 +932,7 @@ if flash:
         unsafe_allow_html=True,
     )
 
-today_str = datetime.datetime.now().strftime("%Y-%m-%d")
+today_str = db_manager.get_today_str()
 all_students = db_manager.get_all_students() or []
 today_logs = db_manager.get_attendance_logs(today_str) or []
 latest_today = latest_log_per_student(today_logs)
@@ -1071,6 +1072,16 @@ if choice == "Overview":
             render_table(filtered)
     else:
         render_table(None, "No check-ins today. Use Live Attendance to log a student.")
+    # --- Auto irregularity check, runs at most once per day ---
+    last_check = db_manager.get_last_check_date("auto_notify")
+    if last_check != today_str:
+        with st.spinner("Running daily attendance health check..."):
+            alert_sent, check_msg, flagged_count = run_irregularity_check(db_manager)
+            db_manager.set_last_check_date("auto_notify")
+        if alert_sent:
+            st.warning(f"Daily check: {check_msg}")
+        else:
+            st.caption("Daily attendance check completed — no irregularities found.")
 
 elif choice == "Live Attendance":
     page_header("Kiosk", "Live Attendance", "Verify faces at the door, or check in a student from the roster.")
@@ -1318,3 +1329,16 @@ elif choice == "Reports":
             st.line_chart(df_trend["present_count"])
         else:
             st.info("Not enough data yet for a trend chart.")
+
+        st.divider()
+        st.subheader("Send Manual Alert Check")
+        st.caption("Manually trigger the irregularity check and email the admin if any students are flagged.")
+
+        if st.button("Run Irregularity Check & Notify", type="primary"):
+            with st.spinner("Checking attendance patterns and sending alerts if needed..."):
+                alert_sent, check_msg, flagged_count = run_irregularity_check(db_manager)
+
+            if alert_sent:
+                st.success(check_msg)
+            else:
+                st.info(check_msg)
