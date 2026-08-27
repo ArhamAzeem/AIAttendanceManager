@@ -1132,60 +1132,75 @@ elif choice == "Student Directory":
 
     with tab2:
         st.subheader("New Enrollment Profile")
+
         auto_id = db_manager.generate_student_id()
-        
-       # --- clear the field BEFORE the widget is created, if flagged ---
+
+        # Clear the field BEFORE the widget is created, if flagged
         if st.session_state.get("clear_name_field", False):
             st.session_state.new_student_name = ""
             st.session_state.clear_name_field = False
-        # --------------------------------------------------------------
-        
+
         c1, c2 = st.columns(2)
+
         with c1:
-            student_id = st.text_input("System ID (Auto-generated)", value=auto_id, disabled=True)
+            student_id = st.text_input(
+                "System ID (Auto-generated)",
+                value=auto_id,
+                disabled=True
+            )
+
         with c2:
-            student_name = st.text_input("Student Full Name", key="new_student_name")
-            
-        st.markdown("Use **Register without camera** on this PC. Capture biometrics only when a webcam is available.")
-        
-        b1, b2 = st.columns(2)
-        with b1:
-            capture_clicked = st.button("Capture Biometrics", type="primary")
-        with b2:
-            no_cam_clicked = st.button("Register without camera")
+            student_name = st.text_input(
+                "Student Full Name",
+                key="new_student_name"
+            )
+
+        st.markdown(
+            "Ensure the student is in a well-lit area and facing the camera before starting the biometric capture."
+        )
+
+        # Only one button
+        capture_clicked = st.button(
+            "Capture Biometrics",
+            type="primary",
+            use_container_width=True
+        )
 
         if capture_clicked:
             if student_name:
-                st.info("Camera initializing... Please instruct the student to look at the camera.")
+                st.info(
+                    "Camera initializing... Please instruct the student to look at the camera."
+                )
+
                 with st.spinner("Capturing and processing 100 face vectors..."):
                     try:
                         from utils import capture_images
-                        success, msg = capture_images(student_id, student_name)
+                        success, msg = capture_images(
+                            student_id,
+                            student_name
+                        )
                     except Exception as e:
                         success, msg = False, str(e)
-                
+
                 if success:
-                    st.success(f"{student_name} successfully enrolled with ID: {student_id}")
+                    st.success(
+                        f"{student_name} successfully enrolled with ID: {student_id}"
+                    )
+
+                    # Allow user to read the success message
                     time.sleep(2)
+
+                    # Clear name field
                     st.session_state.clear_name_field = True
                     st.rerun()
+
                 else:
                     st.error(f"Capture failed: {msg}")
-            else:
-                st.warning("Please provide a name for the student profile.")
 
-        if no_cam_clicked:
-            if student_name:
-                success, msg = register_student_without_camera(student_id, student_name)
-                if success:
-                    st.success(f"{student_name} enrolled with ID: {student_id}. {msg}")
-                    time.sleep(1)
-                    st.session_state.clear_name_field = True
-                    st.rerun()
-                else:
-                    st.error(msg)
             else:
-                st.warning("Please provide a name for the student profile.")
+                st.warning(
+                    "Please provide a name for the student profile."
+                )
 
 elif choice == "AI Training Center":
     page_header("Model", "AI Training Center", "Rebuild the classifier after new enrollments.")
