@@ -44,6 +44,14 @@ class DatabaseManager:
     def get_student_by_id(self, student_id):
         return self.students.find_one({"student_id": student_id})
 
+    def add_attendance_record(self, student_id, date, in_time, out_time="-"):
+        self.attendance.insert_one({
+            "student_id": student_id,
+            "date": date,
+            "in_time": in_time,
+            "out_time": out_time
+        })
+
     def mark_attendance(self, student_id):
         now = datetime.now(self.tz)
         today_date = now.strftime("%Y-%m-%d")
@@ -104,6 +112,38 @@ class DatabaseManager:
         if date:
             query["date"] = date
         return list(self.attendance.find(query, {"_id": 0}).sort("date", -1))
+
+    def get_activity_feed(self, limit=10):
+        """Newest IN/OUT events for the live activity timeline."""
+        records = list(self.attendance.find({}, {"_id": 0}))
+        names = {s["student_id"]: s["name"] for s in self.get_all_students()}
+        events = []
+        for rec in records:
+            sid = rec.get("student_id")
+            name = names.get(sid, sid)
+            date = rec.get("date", "")
+            in_time = rec.get("in_time")
+            out_time = rec.get("out_time")
+            if in_time and in_time != "-":
+                events.append({
+                    "name": name,
+                    "student_id": sid,
+                    "action": "IN",
+                    "time": in_time,
+                    "date": date,
+                    "sort_key": f"{date} {in_time}",
+                })
+            if out_time and out_time not in ("-", "", None):
+                events.append({
+                    "name": name,
+                    "student_id": sid,
+                    "action": "OUT",
+                    "time": out_time,
+                    "date": date,
+                    "sort_key": f"{date} {out_time}",
+                })
+        events.sort(key=lambda e: e["sort_key"], reverse=True)
+        return events[:limit]
 
     def get_all_attendance_records(self):
         """Get every attendance record ever logged, oldest first."""

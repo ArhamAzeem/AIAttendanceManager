@@ -2,6 +2,7 @@ streamlit
 opencv-python
 opencv-contrib-python
 pymongo
+pytz
 pandas
 numpy
 tensorflow
