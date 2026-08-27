@@ -6,40 +6,137 @@ from ml_utils import train_model, recognize_faces_and_mark_attendance
 import datetime
 import time
 
-st.set_page_config(page_title="AI Attendance System", layout="wide")
+st.set_page_config(
+    page_title="AI Attendance System",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
 st.markdown("""
 <style>
+    :root {
+        --bg: #0d1117;
+        --surface: #161b22;
+        --surface-hover: #21262d;
+        --border: #30363d;
+        --text: #c9d1d9;
+        --text-strong: #f0f6fc;
+        --muted: #8b949e;
+        --accent: #58a6ff;
+        --success: #3fb950;
+        --danger: #f85149;
+    }
+
     .stApp {
-        background-color: #0d1117;
-        color: #c9d1d9;
+        background-color: var(--bg);
+        color: var(--text);
         font-family: 'Inter', sans-serif;
     }
     
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
-    header {visibility: hidden;}
-    
+
+    header[data-testid="stHeader"] {
+        background-color: transparent;
+    }
+
+    [data-testid="collapsedControl"],
+    [data-testid="stSidebarCollapsedControl"] {
+        display: flex !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+        position: fixed;
+        top: 0.7rem;
+        left: 0.7rem;
+        z-index: 999999;
+        color: var(--text-strong) !important;
+        background-color: var(--surface) !important;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+    }
+
+    [data-testid="stSidebar"],
+    [data-testid="stSidebar"] > div:first-child,
+    [data-testid="stSidebarContent"] {
+        background-color: var(--surface) !important;
+        color: var(--text);
+    }
+
+    section[data-testid="stSidebar"] {
+        background-color: var(--surface) !important;
+        border-right: 1px solid var(--border);
+    }
+
+    [data-testid="stSidebar"] h2 {
+        color: var(--accent) !important;
+        font-weight: 800 !important;
+        letter-spacing: -0.02em;
+    }
+
+    [data-testid="stSidebar"] p,
+    [data-testid="stSidebar"] span,
+    [data-testid="stSidebar"] label,
+    [data-testid="stSidebar"] .stCaption,
+    [data-testid="stSidebar"] small {
+        color: var(--text) !important;
+    }
+
+    [data-testid="stSidebar"] .stCaption,
+    [data-testid="stSidebar"] [data-testid="stCaptionContainer"] {
+        color: var(--muted) !important;
+        border-top: 1px solid var(--border);
+        padding-top: 0.85rem;
+        margin-top: 0.5rem;
+    }
+
+    [data-testid="stSidebar"] .stRadio > div {
+        gap: 0.35rem;
+    }
+
+    [data-testid="stSidebar"] .stRadio label {
+        background-color: transparent;
+        border: 1px solid transparent;
+        border-radius: 8px;
+        padding: 0.55rem 0.7rem !important;
+        color: var(--text) !important;
+    }
+
+    [data-testid="stSidebar"] .stRadio label:hover {
+        background-color: var(--surface-hover);
+        border-color: var(--border);
+    }
+
+    [data-testid="stSidebar"] .stRadio label:has(input:checked) {
+        background-color: rgba(88, 166, 255, 0.12);
+        border-color: var(--accent);
+        color: var(--accent) !important;
+        font-weight: 600;
+    }
+
+    [data-testid="stSidebar"] [data-baseweb="radio"] div:first-child {
+        border-color: var(--border) !important;
+    }
+
     h1, h2, h3 {
         font-weight: 700;
         letter-spacing: -0.02em;
     }
     .hero-title {
-        color: #58a6ff;
+        color: var(--accent);
         font-size: 3.5rem;
         margin-bottom: 0.5rem;
         font-weight: 800;
     }
     .sub-title {
-        color: #8b949e;
+        color: var(--muted);
         font-size: 1.2rem;
         font-weight: 400;
         margin-bottom: 2rem;
     }
     
     .metric-card {
-        background-color: #161b22;
-        border: 1px solid #30363d;
+        background-color: var(--surface);
+        border: 1px solid var(--border);
         border-radius: 12px;
         padding: 24px;
         text-align: center;
@@ -48,24 +145,24 @@ st.markdown("""
     }
     .metric-card:hover {
         transform: translateY(-5px);
-        border-color: #58a6ff;
+        border-color: var(--accent);
     }
     .metric-value {
         font-size: 3rem;
         font-weight: 800;
-        color: #f0f6fc;
+        color: var(--text-strong);
         margin: 10px 0;
     }
     .metric-label {
         font-size: 1rem;
-        color: #8b949e;
+        color: var(--muted);
         text-transform: uppercase;
         letter-spacing: 0.05em;
     }
     
     .stDataFrame {
         border-radius: 12px;
-        border: 1px solid #30363d;
+        border: 1px solid var(--border);
     }
     
     .stButton>button {
