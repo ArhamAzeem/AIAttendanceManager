@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 from db import DatabaseManager
-from enroll import register_student_without_camera, seed_demo_class
 import datetime
 import time
 import re
