@@ -4,6 +4,7 @@ from db import DatabaseManager
 from utils import capture_images
 from ml_utils import train_model, recognize_faces_and_mark_attendance
 import datetime
+import time
 
 st.set_page_config(page_title="AI Attendance System", layout="wide")
 
@@ -163,8 +164,10 @@ elif choice == "Student Directory":
     tab1, tab2 = st.tabs(["Enrolled Students", "Register New Profile"])
     
     with tab1:
-        if all_students:
-            df = pd.DataFrame(all_students)
+        # --- re-fetch fresh data every time this tab renders ---
+        current_students = db_manager.get_all_students()  # use whatever your actual fetch method is called
+        if current_students:
+            df = pd.DataFrame(current_students)
             df = df[["student_id", "name", "registered_at"]]
             df.columns = ["Student ID", "Full Name", "Registration Date"]
             st.dataframe(df, use_container_width=True, hide_index=True)
@@ -175,11 +178,17 @@ elif choice == "Student Directory":
         st.subheader("New Enrollment Profile")
         auto_id = db_manager.generate_student_id()
         
+       # --- clear the field BEFORE the widget is created, if flagged ---
+        if st.session_state.get("clear_name_field", False):
+            st.session_state.new_student_name = ""
+            st.session_state.clear_name_field = False
+        # --------------------------------------------------------------
+        
         c1, c2 = st.columns(2)
         with c1:
             student_id = st.text_input("System ID (Auto-generated)", value=auto_id, disabled=True)
         with c2:
-            student_name = st.text_input("Student Full Name")
+            student_name = st.text_input("Student Full Name", key="new_student_name")
             
         st.markdown("Important: Before scanning, ensure the student is in a well-lit area and facing the camera.")
         
@@ -191,6 +200,10 @@ elif choice == "Student Directory":
                 
                 if success:
                     st.success(f"{student_name} successfully enrolled with ID: {student_id}")
+                    # --- clear the name field and force a refresh ---
+                    time.sleep(2)
+                    st.session_state.clear_name_field = True
+                    st.rerun()
                 else:
                     st.error(f"Capture failed: {msg}")
             else:

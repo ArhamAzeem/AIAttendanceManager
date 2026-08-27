@@ -11,8 +11,19 @@ class DatabaseManager:
         self.tz = pytz.timezone('Asia/Karachi')
 
     def generate_student_id(self):
-        count = self.students.count_documents({})
-        return f"STU-{count + 1:03d}"
+        last_student = self.students.find_one(
+            {},
+            sort=[("student_id", -1)]
+        )
+
+        if last_student:
+            last_id = last_student["student_id"]
+            last_number = int(last_id.split("-")[1])
+            new_number = last_number + 1
+        else:
+            new_number = 1
+
+        return f"STU-{new_number:03d}"
 
     def register_student(self, student_id, name):
         if self.students.find_one({"student_id": student_id}):

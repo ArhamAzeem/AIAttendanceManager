@@ -11,18 +11,106 @@ db_manager = DatabaseManager()
 
 face_cascade = cv2.CascadeClassifier('haarcascade_frontalface_default.xml')
 
+def check_duplicate_face(cam, face_cascade, num_checks=15, threshold=0.8, margin=0.3, window_name=None):
+    """
+    Runs a quick check against the currently trained model to see if this
+    face already belongs to an existing student. Returns (is_duplicate, student_id, name)
+    """
+    if not os.path.exists("models/attendance_model.h5") or not os.path.exists("models/label_encoder.pkl"):
+        # No model trained yet, can't check for duplicates (first-ever registration)
+        return False, None, None
+
+    from keras.models import load_model
+    import pickle
+
+    model = load_model("models/attendance_model.h5")
+    with open("models/label_encoder.pkl", "rb") as f:
+        le = pickle.load(f)
+
+    checks_done = 0
+    match_counts = {}  # tally votes across frames
+
+    while checks_done < num_checks:
+        ret, frame = cam.read()
+        if not ret:
+            break
+
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        faces = face_cascade.detectMultiScale(gray, 1.3, 5)
+
+        # --- show feedback so the screen isn't blank while checking ---
+        display_frame = frame.copy()
+        cv2.putText(display_frame, "Verifying identity...", (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+        if window_name:
+            cv2.imshow(window_name, display_frame)
+            cv2.waitKey(1)
+        # ----------------------------------------------------------------
+
+        for (x, y, w, h) in faces:
+            face_img = gray[y:y+h, x:x+w]
+            face_img_resized = cv2.resize(face_img, (128, 128))
+            face_img_reshaped = face_img_resized.reshape(1, 128, 128, 1) / 255.0
+
+            predictions = model.predict(face_img_reshaped, verbose=0)[0]  # flatten to 1D array
+            sorted_probs = np.sort(predictions)[::-1]  # descending order
+
+            top_prob = sorted_probs[0]
+            second_prob = sorted_probs[1] if len(sorted_probs) > 1 else 0
+            confidence_gap = top_prob - second_prob
+
+            predicted_class = np.argmax(predictions)
+
+            # require BOTH high absolute confidence AND a clear gap over the runner-up
+            if top_prob > threshold and confidence_gap > margin:
+                student_id = le.inverse_transform([predicted_class])[0]
+                match_counts[student_id] = match_counts.get(student_id, 0) + 1
+
+            checks_done += 1
+
+        cv2.waitKey(1)
+
+    if not match_counts:
+        return False, None, None
+
+    # pick whichever student got the most votes across the checked frames
+    best_match = max(match_counts, key=match_counts.get)
+    votes = match_counts[best_match]
+
+    # require a strong majority of checks to agree, to avoid one lucky frame blocking registration
+    if votes >= (num_checks * 0.5):
+        student_data = db_manager.get_student_by_id(best_match)
+        name = student_data["name"] if student_data else "Unknown"
+        return True, best_match, name
+
+    return False, None, None
+
 def capture_images(student_id, student_name):
     cam = cv2.VideoCapture(0)
 
     if not cam.isOpened():
         return False, "Error: Could not open webcam."
 
+     
     student_dir = f"dataset/{student_id}_{student_name}"
     os.makedirs(student_dir, exist_ok=True)
 
     window_name = 'Registration - Processing Face Data'
     cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
     cv2.setWindowProperty(window_name, cv2.WND_PROP_TOPMOST, 1)
+
+    # --- warm up the camera once, before doing anything else ---
+    for _ in range(10):
+        cam.read()
+    # -------------------------------------------------------------
+
+    # --- duplicate check reuses the SAME cam, same window ---
+    is_dup, dup_id, dup_name = check_duplicate_face(cam, face_cascade, window_name=window_name)
+    if is_dup:
+        cam.release()
+        cv2.destroyAllWindows()
+        return False, f"This face is already registered as {dup_name} (ID: {dup_id}). Duplicate registration blocked."
+    # ------------------------------------------------------------
 
     count = 0
     while count < 100:
@@ -60,7 +148,11 @@ def capture_images(student_id, student_name):
     time.sleep(0.5)
 
     if count >= 100:
-        db_manager.register_student(student_id, student_name)
-        return True, "Successfully captured 100 images and registered student."
+        success, message = db_manager.register_student(student_id, student_name)
+
+        if success:
+            return True, "Successfully captured 100 images and registered student."
+        else:
+            return False, f"Images captured, but database registration failed: {message}"
     else:
         return False, "Capture cancelled or failed before reaching 100 images."
