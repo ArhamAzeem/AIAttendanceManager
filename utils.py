@@ -12,12 +12,7 @@ db_manager = DatabaseManager()
 face_cascade = cv2.CascadeClassifier('haarcascade_frontalface_default.xml')
 
 def check_duplicate_face(cam, face_cascade, num_checks=15, threshold=0.8, margin=0.3, window_name=None):
-    """
-    Runs a quick check against the currently trained model to see if this
-    face already belongs to an existing student. Returns (is_duplicate, student_id, name)
-    """
     if not os.path.exists("models/attendance_model.h5") or not os.path.exists("models/label_encoder.pkl"):
-        # No model trained yet, can't check for duplicates (first-ever registration)
         return False, None, None
 
     from keras.models import load_model
@@ -99,18 +94,14 @@ def capture_images(student_id, student_name):
     cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
     cv2.setWindowProperty(window_name, cv2.WND_PROP_TOPMOST, 1)
 
-    # --- warm up the camera once, before doing anything else ---
     for _ in range(10):
         cam.read()
-    # -------------------------------------------------------------
 
-    # --- duplicate check reuses the SAME cam, same window ---
     is_dup, dup_id, dup_name = check_duplicate_face(cam, face_cascade, window_name=window_name)
     if is_dup:
         cam.release()
         cv2.destroyAllWindows()
         return False, f"This face is already registered as {dup_name} (ID: {dup_id}). Duplicate registration blocked."
-    # ------------------------------------------------------------
 
     count = 0
     while count < 100:

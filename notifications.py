@@ -2,18 +2,15 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
-# --- Configure these with your own sending email + app password ---
-# For Gmail: enable 2FA, then generate an "App Password" (not your normal password)
-# Google Account -> Security -> 2-Step Verification -> App Passwords
+
 SENDER_EMAIL = "arhamazeem318@gmail.com"
 SENDER_APP_PASSWORD = "fycv ktrk lydu pwav"
-ADMIN_EMAIL = "wisamahmed851@gmail.com"  # where alerts get sent
+ADMIN_EMAIL = "wisamahmed851@gmail.com"
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 
 
 def send_email(to_email, subject, body):
-    """Sends a plain-text email. Returns (success: bool, message: str)."""
     try:
         msg = MIMEMultipart()
         msg["From"] = SENDER_EMAIL
@@ -22,7 +19,7 @@ def send_email(to_email, subject, body):
         msg.attach(MIMEText(body, "plain"))
 
         server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
-        server.starttls()  # upgrades to a secure encrypted connection
+        server.starttls() 
         server.login(SENDER_EMAIL, SENDER_APP_PASSWORD)
         server.sendmail(SENDER_EMAIL, to_email, msg.as_string())
         server.quit()
@@ -33,7 +30,6 @@ def send_email(to_email, subject, body):
 
 
 def build_alert_email_body(consecutive_flagged, low_attendance_flagged):
-    """Formats the flagged students into a readable email body."""
     lines = ["AI Attendance Manager - Irregular Attendance Alert", ""]
 
     if consecutive_flagged:
@@ -54,14 +50,9 @@ def build_alert_email_body(consecutive_flagged, low_attendance_flagged):
 
 
 def run_irregularity_check(db_manager, consecutive_threshold=3, percentage_threshold=75):
-    """
-    Checks both criteria, sends ONE consolidated email if anything is flagged.
-    Returns (alert_sent: bool, message: str, flagged_count: int)
-    """
     consecutive_flagged = db_manager.get_consecutive_absent_students(consecutive_threshold)
     low_attendance_flagged = db_manager.get_low_attendance_students(percentage_threshold)
 
-    # avoid double-listing a student who trips both criteria in the count, but keep both sections informative
     if not consecutive_flagged and not low_attendance_flagged:
         return False, "No irregular attendance detected. No email sent.", 0
 
