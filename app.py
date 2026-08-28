@@ -1213,29 +1213,29 @@ elif choice == "Student Directory":
                 )
 
 elif choice == "AI Training Center":
-    page_header("Model", "AI Training Center", "Rebuild the classifier after new enrollments.")
+    page_header("Model", "AI Training Center", "Rebuild the face embeddings after new enrollments or dataset changes.")
 
     st.markdown(
         """
         <div class="alert-card">
-            <b>When to train</b><br>
-            Retrain after each new student. Training reads face images from the dataset folder and writes the model to disk.
+            <b>When to update embeddings</b><br>
+            Update embeddings after modifying the dataset manually. (Note: New registrations automatically update embeddings.)
         </div>
         """,
         unsafe_allow_html=True,
     )
     st.write("")
     
-    if total_students < 2:
-        st.error(f"Insufficient Data: The model requires at least 2 distinct student profiles to train. Currently enrolled: {total_students}")
+    if total_students < 1:
+        st.error(f"Insufficient Data: The system requires at least 1 student profile. Currently enrolled: {total_students}")
     else:
-        st.success(f"System Ready: {total_students} profiles available for compilation.")
+        st.success(f"System Ready: {total_students} profiles available for embedding generation.")
         
-        if st.button("Initialize Training Pipeline", type="primary"):
-            with st.spinner("Training Neural Network... This may take a few moments depending on dataset size."):
+        if st.button("Update Face Embeddings", type="primary"):
+            with st.spinner("Generating face embeddings... This may take a few moments depending on dataset size."):
                 try:
-                    from ml_utils import train_model
-                    success, msg = train_model()
+                    from ml_utils import update_embeddings
+                    success, msg = update_embeddings()
                 except Exception as e:
                     success, msg = False, str(e)
                 

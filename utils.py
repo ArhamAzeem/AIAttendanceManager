@@ -3,63 +3,55 @@ import os
 import numpy as np
 from db import DatabaseManager
 import time
+from ml_utils import get_face_app, update_embeddings
+import pickle
 
 os.makedirs("dataset", exist_ok=True)
 os.makedirs("models", exist_ok=True)
 
 db_manager = DatabaseManager()
 
-face_cascade = cv2.CascadeClassifier('haarcascade_frontalface_default.xml')
-
-def check_duplicate_face(cam, face_cascade, num_checks=15, threshold=0.8, margin=0.3, window_name=None):
-    if not os.path.exists("models/attendance_model.h5") or not os.path.exists("models/label_encoder.pkl"):
+def check_duplicate_face(cam, num_checks=15, threshold=1.0, window_name=None):
+    if not os.path.exists("models/embeddings.pkl"):
         return False, None, None
 
-    from keras.models import load_model
-    import pickle
-
-    model = load_model("models/attendance_model.h5")
-    with open("models/label_encoder.pkl", "rb") as f:
-        le = pickle.load(f)
+    with open("models/embeddings.pkl", "rb") as f:
+        data = pickle.load(f)
+        
+    known_encodings = np.array(data["encodings"])
+    known_student_ids = data["student_ids"]
+    known_names = data["names"]
+    
+    app = get_face_app()
 
     checks_done = 0
-    match_counts = {}  # tally votes across frames
+    match_counts = {}
 
     while checks_done < num_checks:
         ret, frame = cam.read()
         if not ret:
             break
 
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = face_cascade.detectMultiScale(gray, 1.3, 5)
-
-        # --- show feedback so the screen isn't blank while checking ---
         display_frame = frame.copy()
         cv2.putText(display_frame, "Verifying identity...", (10, 30),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
         if window_name:
             cv2.imshow(window_name, display_frame)
             cv2.waitKey(1)
-        # ----------------------------------------------------------------
 
-        for (x, y, w, h) in faces:
-            face_img = gray[y:y+h, x:x+w]
-            face_img_resized = cv2.resize(face_img, (128, 128))
-            face_img_reshaped = face_img_resized.reshape(1, 128, 128, 1) / 255.0
+        faces = app.get(frame)
 
-            predictions = model.predict(face_img_reshaped, verbose=0)[0]  # flatten to 1D array
-            sorted_probs = np.sort(predictions)[::-1]  # descending order
-
-            top_prob = sorted_probs[0]
-            second_prob = sorted_probs[1] if len(sorted_probs) > 1 else 0
-            confidence_gap = top_prob - second_prob
-
-            predicted_class = np.argmax(predictions)
-
-            # require BOTH high absolute confidence AND a clear gap over the runner-up
-            if top_prob > threshold and confidence_gap > margin:
-                student_id = le.inverse_transform([predicted_class])[0]
-                match_counts[student_id] = match_counts.get(student_id, 0) + 1
+        for face in faces:
+            encoding = face.embedding
+            encoding = encoding / np.linalg.norm(encoding)
+            
+            distances = np.linalg.norm(known_encodings - encoding, axis=1)
+                
+            if len(distances) > 0:
+                best_match_index = np.argmin(distances)
+                if distances[best_match_index] < threshold:
+                    student_id = known_student_ids[best_match_index]
+                    match_counts[student_id] = match_counts.get(student_id, 0) + 1
 
             checks_done += 1
 
@@ -68,11 +60,9 @@ def check_duplicate_face(cam, face_cascade, num_checks=15, threshold=0.8, margin
     if not match_counts:
         return False, None, None
 
-    # pick whichever student got the most votes across the checked frames
     best_match = max(match_counts, key=match_counts.get)
     votes = match_counts[best_match]
 
-    # require a strong majority of checks to agree, to avoid one lucky frame blocking registration
     if votes >= (num_checks * 0.5):
         student_data = db_manager.get_student_by_id(best_match)
         name = student_data["name"] if student_data else "Unknown"
@@ -86,7 +76,6 @@ def capture_images(student_id, student_name):
     if not cam.isOpened():
         return False, "Error: Could not open webcam."
 
-     
     student_dir = f"dataset/{student_id}_{student_name}"
     os.makedirs(student_dir, exist_ok=True)
 
@@ -97,33 +86,47 @@ def capture_images(student_id, student_name):
     for _ in range(10):
         cam.read()
 
-    is_dup, dup_id, dup_name = check_duplicate_face(cam, face_cascade, window_name=window_name)
+    is_dup, dup_id, dup_name = check_duplicate_face(cam, window_name=window_name)
     if is_dup:
         cam.release()
         cv2.destroyAllWindows()
         return False, f"This face is already registered as {dup_name} (ID: {dup_id}). Duplicate registration blocked."
 
+    app = get_face_app()
+
     count = 0
-    while count < 100:
+    # Capture 30 images
+    while count < 30:
         ret, frame = cam.read()
         if not ret:
             break
+            
+        faces = app.get(frame)
 
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = face_cascade.detectMultiScale(gray, 1.3, 5)
-
-        for (x, y, w, h) in faces:
+        for face in faces:
+            bbox = face.bbox.astype(int)
+            x1, y1, x2, y2 = bbox
             count += 1
-            face_img = gray[y:y+h, x:x+w]
-            face_img = cv2.resize(face_img, (128, 128))
-            cv2.imwrite(f"{student_dir}/{count}.jpg", face_img)
+            
+            # Ensure coordinates are within frame bounds
+            x1 = max(0, x1)
+            y1 = max(0, y1)
+            x2 = min(frame.shape[1], x2)
+            y2 = min(frame.shape[0], y2)
 
-            cv2.rectangle(frame, (x, y), (x+w, y+h), (255, 0, 0), 2)
-            cv2.putText(frame, f"Scanning: {count}%", (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 0), 2)
+            if x2 > x1 and y2 > y1:
+                face_img = frame[y1:y2, x1:x2]
+                face_img = cv2.resize(face_img, (128, 128))
+                cv2.imwrite(f"{student_dir}/{count}.jpg", face_img)
+
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
+            
+            percentage = int((count / 30.0) * 100)
+            cv2.putText(frame, f"Scanning: {percentage}%", (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 0), 2)
 
             height, width, _ = frame.shape
             cv2.rectangle(frame, (0, height - 30), (width, height), (0, 0, 0), -1)
-            cv2.rectangle(frame, (0, height - 30), (int(width * (count / 100.0)), height), (0, 255, 0), -1)
+            cv2.rectangle(frame, (0, height - 30), (int(width * (count / 30.0)), height), (0, 255, 0), -1)
             cv2.putText(frame, "Processing Face Data...", (10, height - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
 
             time.sleep(0.02)
@@ -138,12 +141,13 @@ def capture_images(student_id, student_name):
     
     time.sleep(0.5)
 
-    if count >= 100:
+    if count >= 30:
         success, message = db_manager.register_student(student_id, student_name)
 
         if success:
-            return True, "Successfully captured 100 images and registered student."
+            update_embeddings()
+            return True, "Successfully captured images, registered student, and updated embeddings."
         else:
             return False, f"Images captured, but database registration failed: {message}"
     else:
-        return False, "Capture cancelled or failed before reaching 100 images."
+        return False, "Capture cancelled or failed before reaching required images."

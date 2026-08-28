@@ -5,90 +5,105 @@ import pickle
 from db import DatabaseManager
 import time
 from datetime import datetime
+import json
+from insightface.app import FaceAnalysis
 
 db_manager = DatabaseManager()
 
-face_cascade = cv2.CascadeClassifier('haarcascade_frontalface_default.xml')
+# Load config
+try:
+    with open("config.json", "r") as f:
+        config = json.load(f)
+        DISTANCE_THRESHOLD = config.get("distance_threshold", 1.0)
+except FileNotFoundError:
+    DISTANCE_THRESHOLD = 1.0
 
-def train_model():
-    from sklearn.preprocessing import LabelEncoder
-    from sklearn.model_selection import train_test_split
-    from keras.utils import to_categorical
-    from keras.models import Sequential
-    from keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout
+_face_app = None
 
+def get_face_app():
+    global _face_app
+    if _face_app is None:
+        _face_app = FaceAnalysis(name='buffalo_l', providers=['CPUExecutionProvider'])
+        _face_app.prepare(ctx_id=0, det_size=(640, 640))
+    return _face_app
+
+def update_embeddings():
     dataset_path = "dataset"
     if not os.path.exists(dataset_path) or len(os.listdir(dataset_path)) == 0:
         return False, "Dataset is empty. Please register students first."
 
-    faces = []
-    labels = []
+    app = get_face_app()
+
+    known_encodings = []
+    known_student_ids = []
+    known_names = []
 
     for student_folder in os.listdir(dataset_path):
         folder_path = os.path.join(dataset_path, student_folder)
         if not os.path.isdir(folder_path):
             continue
 
-        student_id = student_folder.split('_')[0]
-
-        for image_name in os.listdir(folder_path):
+        parts = student_folder.split('_')
+        student_id = parts[0]
+        student_name = parts[1] if len(parts) > 1 else "Unknown"
+        
+        student_encodings = []
+        
+        image_files = os.listdir(folder_path)
+        for image_name in image_files[:20]:
             image_path = os.path.join(folder_path, image_name)
-            img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-            if img is not None:
-                img = cv2.resize(img, (128, 128))
-                faces.append(img)
-                labels.append(student_id)
-
-    if len(faces) == 0:
-        return False, "No images found in dataset."
-
-    faces = np.array(faces).reshape(-1, 128, 128, 1)
-    faces = faces / 255.0
-
-    le = LabelEncoder()
-    labels_encoded = le.fit_transform(labels)
-    labels_categorical = to_categorical(labels_encoded)
-
-    with open("models/label_encoder.pkl", "wb") as f:
-        pickle.dump(le, f)
-
-    x_train, x_test, y_train, y_test = train_test_split(faces, labels_categorical, test_size=0.2, random_state=42)
-
-    num_classes = len(le.classes_)
-
-    model = Sequential([
-        Conv2D(32, (3, 3), activation='relu', input_shape=(128, 128, 1)),
-        MaxPooling2D(2, 2),
-        Conv2D(64, (3, 3), activation='relu'),
-        MaxPooling2D(2, 2),
-        Flatten(),
-        Dense(128, activation='relu'),
-        Dropout(0.5),
-        Dense(num_classes, activation='softmax')
-    ])
-
-    model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
-
-    model.fit(x_train, y_train, epochs=10, validation_data=(x_test, y_test), batch_size=32, verbose=1)
-
-    model.save("models/attendance_model.h5")
-
-    return True, "Model trained and saved successfully."
+            img = cv2.imread(image_path)
+            if img is None: continue
+            
+            # Pad the 128x128 cropped face so insightface detector can find it
+            if img.shape[0] < 300 or img.shape[1] < 300:
+                pad_y = (640 - img.shape[0]) // 2
+                pad_x = (640 - img.shape[1]) // 2
+                img = cv2.copyMakeBorder(img, pad_y, pad_y, pad_x, pad_x, cv2.BORDER_CONSTANT, value=[0, 0, 0])
+            
+            faces = app.get(img)
+            
+            if len(faces) > 0:
+                student_encodings.append(faces[0].embedding)
+                
+        if len(student_encodings) > 0:
+            avg_encoding = np.mean(student_encodings, axis=0)
+            avg_encoding = avg_encoding / np.linalg.norm(avg_encoding)
+            known_encodings.append(avg_encoding)
+            known_student_ids.append(student_id)
+            known_names.append(student_name)
+            
+    if len(known_encodings) == 0:
+        return False, "No valid faces found in dataset to generate embeddings."
+        
+    data = {
+        "encodings": known_encodings,
+        "student_ids": known_student_ids,
+        "names": known_names
+    }
+    
+    with open("models/embeddings.pkl", "wb") as f:
+        pickle.dump(data, f)
+        
+    return True, "Embeddings generated and saved successfully."
 
 def recognize_faces_and_mark_attendance():
-    from keras.models import load_model
-
-    if not os.path.exists("models/attendance_model.h5") or not os.path.exists("models/label_encoder.pkl"):
-        return False, "Model not trained yet. Please train the model first."
-
-    model = load_model("models/attendance_model.h5")
-    with open("models/label_encoder.pkl", "rb") as f:
-        le = pickle.load(f)
-
+    if not os.path.exists("models/embeddings.pkl"):
+        return False, "Embeddings not found. Please update embeddings first."
+        
+    with open("models/embeddings.pkl", "rb") as f:
+        data = pickle.load(f)
+        
+    known_encodings = np.array(data["encodings"])
+    known_student_ids = data["student_ids"]
+    known_names = data["names"]
+    
+    app = get_face_app()
+        
     cam = cv2.VideoCapture(0)
     if not cam.isOpened():
         return False, "Could not open webcam."
-
+        
     window_name = 'Smart Attendance System'
     cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
     cv2.setWindowProperty(window_name, cv2.WND_PROP_TOPMOST, 1)
@@ -100,40 +115,44 @@ def recognize_faces_and_mark_attendance():
         ret, frame = cam.read()
         if not ret:
             break
-
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = face_cascade.detectMultiScale(gray, 1.3, 5)
-        
+            
         height, width, _ = frame.shape
         cv2.putText(frame, "AI Scanning for Faces...", (10, height - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-
-        for (x, y, w, h) in faces:
-            face_img = gray[y:y+h, x:x+w]
-            face_img_resized = cv2.resize(face_img, (128, 128))
-            face_img_reshaped = face_img_resized.reshape(1, 128, 128, 1) / 255.0
-
-            predictions = model.predict(face_img_reshaped, verbose=0)
-            max_prob = np.max(predictions)
-            predicted_class = np.argmax(predictions)
-
-            if max_prob > 0.8:
-                student_id = le.inverse_transform([predicted_class])[0]
-                student_data = db_manager.get_student_by_id(student_id)
-                name = student_data["name"] if student_data else "Unknown"
-
+        
+        faces = app.get(frame)
+        
+        for face in faces:
+            bbox = face.bbox.astype(int)
+            x1, y1, x2, y2 = bbox
+            encoding = face.embedding
+            encoding = encoding / np.linalg.norm(encoding)
+            
+            name = "Unknown"
+            student_id = None
+            color = (0, 0, 255)
+            
+            distances = np.linalg.norm(known_encodings - encoding, axis=1)
+            
+            if len(distances) > 0:
+                best_match_index = np.argmin(distances)
+                if distances[best_match_index] < DISTANCE_THRESHOLD:
+                    student_id = known_student_ids[best_match_index]
+                    name = known_names[best_match_index]
+                    color = (0, 255, 0)
+                        
+            if student_id is not None:
                 logged_msg = db_manager.mark_attendance(student_id)
                 consecutive_recognitions += 1
-
-                cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
-                cv2.putText(frame, f"Verified: {name}", (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+                
+                cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+                cv2.putText(frame, f"Verified: {name}", (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
                 
                 cv2.rectangle(frame, (0, 0), (width, 40), (0, 255, 0), -1)
                 cv2.putText(frame, "ACCESS GRANTED - LOGGING TIME", (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
-
             else:
                 consecutive_recognitions = 0
-                cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 0, 255), 2)
-                cv2.putText(frame, "Unknown Face", (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+                cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+                cv2.putText(frame, "Unknown Face", (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
 
         cv2.imshow(window_name, frame)
         

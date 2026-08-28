@@ -5,8 +5,8 @@ pymongo
 pytz
 pandas
 numpy
-tensorflow
-keras
-scikit-learn
+insightface
+onnxruntime
+scipy
 jupyter
 Pillow
