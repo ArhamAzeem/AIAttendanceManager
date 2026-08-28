@@ -11,7 +11,15 @@ db_manager = DatabaseManager()
 
 face_cascade = cv2.CascadeClassifier('haarcascade_frontalface_default.xml')
 
-def check_duplicate_face(cam, face_cascade, num_checks=15, threshold=0.8, margin=0.3, window_name=None):
+def check_duplicate_face(cam, face_cascade, num_checks=25, threshold=0.85, margin=0.25, window_name=None):
+    """
+    Improved duplicate face checker with:
+    - More frames (25)
+    - Higher confidence threshold
+    - Stricter voting (70% agreement required)
+    - Face size filter
+    - Better feedback
+    """
     if not os.path.exists("models/attendance_model.h5") or not os.path.exists("models/label_encoder.pkl"):
         return False, None, None
 
@@ -23,7 +31,8 @@ def check_duplicate_face(cam, face_cascade, num_checks=15, threshold=0.8, margin
         le = pickle.load(f)
 
     checks_done = 0
-    match_counts = {}  # tally votes across frames
+    match_counts = {}          # student_id → number of votes
+    confidence_sum = {}        # student_id → sum of confidences (for better decision)
 
     while checks_done < num_checks:
         ret, frame = cam.read()
@@ -33,53 +42,60 @@ def check_duplicate_face(cam, face_cascade, num_checks=15, threshold=0.8, margin
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         faces = face_cascade.detectMultiScale(gray, 1.3, 5)
 
-        # --- show feedback so the screen isn't blank while checking ---
+        # --- Visual feedback ---
         display_frame = frame.copy()
-        cv2.putText(display_frame, "Verifying identity...", (10, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+        cv2.putText(display_frame, f"Verifying identity... ({checks_done}/{num_checks})", 
+                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+        
         if window_name:
             cv2.imshow(window_name, display_frame)
             cv2.waitKey(1)
-        # ----------------------------------------------------------------
 
         for (x, y, w, h) in faces:
+            # Reject faces that are too small (poor quality)
+            if w < 100 or h < 100:
+                continue
+
             face_img = gray[y:y+h, x:x+w]
             face_img_resized = cv2.resize(face_img, (128, 128))
             face_img_reshaped = face_img_resized.reshape(1, 128, 128, 1) / 255.0
 
-            predictions = model.predict(face_img_reshaped, verbose=0)[0]  # flatten to 1D array
-            sorted_probs = np.sort(predictions)[::-1]  # descending order
+            predictions = model.predict(face_img_reshaped, verbose=0)[0]
+            sorted_probs = np.sort(predictions)[::-1]
 
             top_prob = sorted_probs[0]
-            second_prob = sorted_probs[1] if len(sorted_probs) > 1 else 0
+            second_prob = sorted_probs[1] if len(sorted_probs) > 1 else 0.0
             confidence_gap = top_prob - second_prob
 
             predicted_class = np.argmax(predictions)
 
-            # require BOTH high absolute confidence AND a clear gap over the runner-up
+            # Require both high confidence AND clear gap from second place
             if top_prob > threshold and confidence_gap > margin:
                 student_id = le.inverse_transform([predicted_class])[0]
+                
                 match_counts[student_id] = match_counts.get(student_id, 0) + 1
+                confidence_sum[student_id] = confidence_sum.get(student_id, 0.0) + top_prob
 
             checks_done += 1
+            break   # only process the first good face per frame
 
         cv2.waitKey(1)
 
     if not match_counts:
         return False, None, None
 
-    # pick whichever student got the most votes across the checked frames
+    # Pick the student with the most votes
     best_match = max(match_counts, key=match_counts.get)
     votes = match_counts[best_match]
+    avg_confidence = confidence_sum[best_match] / votes
 
-    # require a strong majority of checks to agree, to avoid one lucky frame blocking registration
-    if votes >= (num_checks * 0.5):
+    # Require strong majority (70%) AND good average confidence
+    if votes >= (num_checks * 0.7) and avg_confidence >= 0.80:
         student_data = db_manager.get_student_by_id(best_match)
         name = student_data["name"] if student_data else "Unknown"
         return True, best_match, name
 
     return False, None, None
-
 def capture_images(student_id, student_name):
     cam = cv2.VideoCapture(0)
 

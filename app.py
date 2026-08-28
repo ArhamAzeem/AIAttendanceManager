@@ -1071,7 +1071,7 @@ if choice == "Overview":
             render_table(filtered)
     else:
         render_table(None, "No check-ins today. Use Live Attendance to log a student.")
-    # --- Auto irregularity check, runs at most once per day ---
+
     last_check = db_manager.get_last_check_date("auto_notify")
     if last_check != today_str:
         with st.spinner("Running daily attendance health check..."):
@@ -1121,7 +1121,6 @@ elif choice == "Student Directory":
     tab1, tab2 = st.tabs(["Enrolled Students", "Register New Profile"])
     
     with tab1:
-        # --- re-fetch fresh data every time this tab renders ---
         current_students = db_manager.get_all_students()
         dir_query = st.text_input(
             "Search directory",
@@ -1145,7 +1144,6 @@ elif choice == "Student Directory":
 
         auto_id = db_manager.generate_student_id()
 
-        # Clear the field BEFORE the widget is created, if flagged
         if st.session_state.get("clear_name_field", False):
             st.session_state.new_student_name = ""
             st.session_state.clear_name_field = False
@@ -1169,7 +1167,6 @@ elif choice == "Student Directory":
             "Ensure the student is in a well-lit area and facing the camera before starting the biometric capture."
         )
 
-        # Only one button
         capture_clicked = st.button(
             "Capture Biometrics",
             type="primary",
@@ -1197,10 +1194,8 @@ elif choice == "Student Directory":
                         f"{student_name} successfully enrolled with ID: {student_id}"
                     )
 
-                    # Allow user to read the success message
                     time.sleep(2)
 
-                    # Clear name field
                     st.session_state.clear_name_field = True
                     st.rerun()
 
@@ -1291,7 +1286,6 @@ elif choice == "Reports":
         )
         render_table(df_display)
 
-        # --- CSV export ---
         csv = df_display.to_csv(index=False).encode("utf-8")
         st.download_button(
             label="Download Report as CSV",
@@ -1302,7 +1296,6 @@ elif choice == "Reports":
 
         st.divider()
 
-        # --- Most irregular / most absent list ---
         st.subheader("Most Irregular Attendance")
         irregular = df_summary[df_summary["attendance_percentage"] < 75].head(10)
         if not irregular.empty:
@@ -1319,7 +1312,6 @@ elif choice == "Reports":
 
         st.divider()
 
-        # --- Trend chart ---
         st.subheader("Daily Attendance Trend")
         if trend_data:
             df_trend = pd.DataFrame(trend_data)
