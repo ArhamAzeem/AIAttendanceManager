@@ -81,7 +81,7 @@ db_manager = DatabaseManager()
 
 with st.sidebar:
     st.markdown("## Campus AI")
-    menu = ["Overview", "Live Attendance", "Student Directory", "AI Training Center"]
+    menu = ["Overview", "Live Attendance", "Student Directory", "AI Training Center", "Reports"]
     choice = st.radio("Navigation", menu, label_visibility="collapsed")
     st.caption("AI Attendance Manager v2.0")
 
@@ -235,3 +235,59 @@ elif choice == "AI Training Center":
                     st.success(f"SUCCESS: {msg}")
                 else:
                     st.error(f"ERROR: {msg}")
+
+elif choice == "Reports":
+    st.markdown("<div class='hero-title'>Attendance Reports</div>", unsafe_allow_html=True)
+    st.markdown("<div class='sub-title'>Historical patterns, absenteeism, and trends.</div>", unsafe_allow_html=True)
+
+    summary_data = db_manager.get_attendance_summary_per_student()
+    trend_data = db_manager.get_daily_attendance_trend()
+
+    if not summary_data:
+        st.info("No attendance data recorded yet.")
+    else:
+        # --- Attendance % table, sorted worst-attendance-first ---
+        st.subheader("Per-Student Attendance Summary")
+        df_summary = pd.DataFrame(summary_data)
+        df_summary = df_summary.sort_values("attendance_percentage", ascending=True)
+        df_display = df_summary[["student_id", "name", "days_present", "days_absent", "attendance_percentage"]]
+        df_display.columns = ["ID", "Name", "Days Present", "Days Absent", "Attendance %"]
+        st.dataframe(df_display, use_container_width=True, hide_index=True)
+
+        # --- CSV export ---
+        csv = df_display.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            label="Download Report as CSV",
+            data=csv,
+            file_name=f"attendance_report_{today_str}.csv",
+            mime="text/csv"
+        )
+
+        st.divider()
+
+        # --- Most irregular / most absent list ---
+        st.subheader("Most Irregular Attendance")
+        irregular = df_summary[df_summary["attendance_percentage"] < 75].head(10)
+        if not irregular.empty:
+            for _, row in irregular.iterrows():
+                st.markdown(f"""
+                <div style='background: #161b22; padding: 15px; border-radius: 10px; border-left: 4px solid #f85149; margin-bottom: 10px;'>
+                    <b>{row['name']}</b> ({row['student_id']}) — 
+                    <span style='color: #f85149;'>{row['attendance_percentage']}% attendance</span> 
+                    ({row['days_present']}/{row['total_days'] if 'total_days' in row else row['days_present'] + row['days_absent']} days)
+                </div>
+                """, unsafe_allow_html=True)
+        else:
+            st.success("No students below 75% attendance.")
+
+        st.divider()
+
+        # --- Trend chart ---
+        st.subheader("Daily Attendance Trend")
+        if trend_data:
+            df_trend = pd.DataFrame(trend_data)
+            df_trend["date"] = pd.to_datetime(df_trend["date"])
+            df_trend = df_trend.set_index("date")
+            st.line_chart(df_trend["present_count"])
+        else:
+            st.info("Not enough data yet for a trend chart.")

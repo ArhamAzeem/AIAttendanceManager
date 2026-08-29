@@ -104,3 +104,63 @@ class DatabaseManager:
         if date:
             query["date"] = date
         return list(self.attendance.find(query, {"_id": 0}).sort("date", -1))
+
+    def get_all_attendance_records(self):
+        """Get every attendance record ever logged, oldest first."""
+        return list(self.attendance.find({}, {"_id": 0}).sort("date", 1))
+
+    def get_distinct_attendance_dates(self):
+        """
+        All unique dates where at least one student was marked present.
+        Used as the 'total possible days' baseline for % calculations,
+        since you don't have a fixed class schedule/calendar defined.
+        """
+        return sorted(self.attendance.distinct("date"))
+
+    def get_attendance_summary_per_student(self):
+        """
+        Builds a per-student report: how many days they were present,
+        out of how many days attendance was taken at all, as a percentage.
+        """
+        all_dates = self.get_distinct_attendance_dates()
+        total_days = len(all_dates)
+
+        students = self.get_all_students()
+        summary = []
+
+        for student in students:
+            student_id = student["student_id"]
+            name = student["name"]
+
+            present_dates = self.attendance.distinct("date", {"student_id": student_id})
+            present_count = len(present_dates)
+
+            if total_days > 0:
+                percentage = round((present_count / total_days) * 100, 1)
+            else:
+                percentage = 0.0
+
+            absent_count = total_days - present_count
+
+            summary.append({
+                "student_id": student_id,
+                "name": name,
+                "days_present": present_count,
+                "days_absent": absent_count,
+                "total_days": total_days,
+                "attendance_percentage": percentage
+            })
+
+        return summary
+
+    def get_daily_attendance_trend(self):
+        """
+        Returns count of present students per date, across all recorded dates.
+        Used for the trend chart.
+        """
+        pipeline = [
+            {"$group": {"_id": "$date", "count": {"$addToSet": "$student_id"}}},
+            {"$project": {"date": "$_id", "present_count": {"$size": "$count"}, "_id": 0}},
+            {"$sort": {"date": 1}}
+        ]
+        return list(self.attendance.aggregate(pipeline))
